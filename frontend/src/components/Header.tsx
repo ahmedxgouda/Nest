@@ -50,24 +50,40 @@ export default function Header() {
   return (
     <header className="fixed inset-x-0 top-0 z-50 w-full max-w-[100vw] bg-owasp-blue shadow-md dark:bg-slate-800">
       <div className="flex h-16 w-full items-center px-4 max-md:justify-between" id="navbar-sticky">
-        {/* Logo */}
-        <NavLink to="/" onClick={() => setMobileMenuOpen(false)}>
-          <div className="flex h-full items-center">
-            <img
-              src={'/img/owasp_icon_white_sm.png'}
-              className="hidden h-16 dark:block"
-              alt="OWASP Logo"
-            ></img>
-            <img
-              src={'/img/owasp_icon_black_sm.png'}
-              className="block h-16 dark:hidden"
-              alt="OWASP Logo"
-            ></img>
-            <div className="text-2xl text-slate-800 dark:text-slate-300 dark:hover:text-slate-200">
-              Nest
-            </div>
+        <div className="flex items-center justify-start">
+          <div className="md:hidden">
+            <Button
+              onClick={toggleMobileMenu}
+              className="text-slate-300 hover:text-slate-100 focus:outline-none"
+            >
+              <span className="sr-only">Open main menu</span>
+              {mobileMenuOpen ? (
+                <FontAwesomeIcon icon={faTimes} className="h-6 w-6" />
+              ) : (
+                <FontAwesomeIcon icon={faBars} className="h-6 w-6" />
+              )}
+            </Button>
           </div>
-        </NavLink>
+          {/* Logo */}
+          <NavLink to="/" onClick={() => setMobileMenuOpen(false)}>
+            <div className="flex h-full items-center">
+              <img
+                src={'/img/owasp_icon_white_sm.png'}
+                className="hidden h-16 dark:block"
+                alt="OWASP Logo"
+              ></img>
+              <img
+                src={'/img/owasp_icon_black_sm.png'}
+                className="block h-16 dark:hidden"
+                alt="OWASP Logo"
+              ></img>
+              <div className="text-2xl text-slate-800 dark:text-slate-300 dark:hover:text-slate-200">
+                Nest
+              </div>
+            </div>
+          </NavLink>
+        </div>
+
         {/* Desktop Header Links */}
         <div className="hidden flex-1 justify-between rounded-lg pl-6 font-medium md:block">
           <div className="flex justify-start pl-6">
@@ -107,19 +123,6 @@ export default function Header() {
             className="hidden"
           />
           <ModeToggle />
-          <div className="md:hidden">
-            <Button
-              onClick={toggleMobileMenu}
-              className="text-slate-300 hover:text-slate-100 focus:outline-none"
-            >
-              <span className="sr-only">Open main menu</span>
-              {mobileMenuOpen ? (
-                <FontAwesomeIcon icon={faTimes} className="h-6 w-6" />
-              ) : (
-                <FontAwesomeIcon icon={faBars} className="h-6 w-6" />
-              )}
-            </Button>
-          </div>
         </div>
       </div>
       <div
@@ -128,26 +131,37 @@ export default function Header() {
           mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
         )}
       >
-        <div className="flex h-full flex-col justify-between space-y-1 px-2 pb-3 pt-2">
-          {/* Logo */}
-          <div className="flex flex-col justify-center gap-1">
-            <NavLink to="/" onClick={() => setMobileMenuOpen(false)}>
-              <div className="flex h-full items-center">
-                <img
-                  src={'/img/owasp_icon_white_sm.png'}
-                  className="hidden h-16 dark:block"
-                  alt="OWASP Logo"
-                ></img>
-                <img
-                  src={'/img/owasp_icon_black_sm.png'}
-                  className="block h-16 dark:hidden"
-                  alt="OWASP Logo"
-                ></img>
-                <div className="text-2xl text-slate-800 dark:text-slate-300 dark:hover:text-slate-200">
-                  Nest
+        <div className="flex h-full flex-col p-2">
+          <div className="flex items-center justify-between p-2">
+            <div className="flex items-center">
+              <Button
+                onClick={toggleMobileMenu}
+                className="text-slate-300 hover:text-slate-100 focus:outline-none"
+              >
+                <FontAwesomeIcon icon={faTimes} className="h-6 w-6" />
+              </Button>
+            </div>
+            <div className="flex items-center justify-center">
+              <NavLink to="/" onClick={() => setMobileMenuOpen(false)}>
+                <div className="flex h-full items-center justify-center">
+                  <img
+                    src={'/img/owasp_icon_white_sm.png'}
+                    className="hidden h-16 dark:block"
+                    alt="OWASP Logo"
+                  ></img>
+                  <img
+                    src={'/img/owasp_icon_black_sm.png'}
+                    className="block h-16 dark:hidden"
+                    alt="OWASP Logo"
+                  ></img>
+                  <div className="text-2xl text-slate-800 dark:text-slate-300 dark:hover:text-slate-200">
+                    Nest
+                  </div>
                 </div>
-              </div>
-            </NavLink>
+              </NavLink>
+            </div>
+          </div>
+          <div className="flex flex-col items-start justify-center gap-1">
             {headerLinks.map((link, i) => (
               <NavLink
                 key={i}
@@ -163,7 +177,7 @@ export default function Header() {
             ))}
           </div>
 
-          <div className="flex flex-col gap-y-2">
+          <div className="mt-auto flex flex-col items-center justify-center gap-y-2">
             <NavButton
               href="https://github.com/OWASP/Nest"
               defaultIcon={faRegularStar}
