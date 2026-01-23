@@ -2,6 +2,7 @@
 
 from django.core.management.base import BaseCommand
 
+from apps.github.models.milestone import Milestone
 from apps.owasp.models.project import Project
 
 
@@ -102,6 +103,11 @@ class Command(BaseCommand):
             project.languages = sorted(languages)
             project.licenses = sorted(licenses)
             project.topics = sorted(topics)
+            project.milestones.set(
+                Milestone.objects.filter(
+                    repository__in=project.repositories.all(),
+                )
+            )
 
             project.has_active_repositories = project.repositories.filter(
                 is_archived=False,
