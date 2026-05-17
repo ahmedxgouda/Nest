@@ -1,326 +1,23 @@
-name: Run CI/CD
+name: Run staging workflow
 
 on:
-  merge_group:
-  pull_request:
-    branches:
-      - dev
-      - feature/**
-      - main
-  push:
-    branches:
-      - dev
-      - feature/**
-      - main
-  release:
-    types:
-      - published
-  schedule:
-    - cron: 0 2 * * *  # Run staging deploy daily at 2am UTC.
-  workflow_dispatch:
-
-permissions: {}
+  workflow_call:
+    inputs:
+      release_version:
+        description: The release version to set
+        required: true
+        type: string
 
 env:
   FORCE_COLOR: 1
 
+permissions: {}
+
 jobs:
-  run-code-quality-checks:
-    name: Run code quality checks
-    permissions:
-      contents: read
-    uses: ./.github/workflows/run-code-quality-checks.yaml
-
-  run-backend-tests:
-    name: Run backend tests
-    needs:
-      - run-code-quality-checks
-    permissions:
-      actions: write
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/run-backend-tests.yaml
-
-  run-frontend-unit-tests:
-    name: Run frontend unit tests
-    needs:
-      - run-code-quality-checks
-    permissions:
-      contents: read
-      id-token: write
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-
-      - name: Set up Docker buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
-
-      - name: Build frontend unit-testing image
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
-        with:
-          cache-from: |
-            type=gha
-            type=registry,ref=owasp/nest:test-frontend-unit-cache
-          cache-to: |
-            type=gha,compression=zstd
-          context: frontend
-          file: docker/frontend/Dockerfile.unit.test
-          load: true
-          platforms: linux/amd64
-          tags: owasp/nest:test-frontend-unit-latest
-
-      - name: Run frontend unit tests
-        run: |
-          CONTAINER_ID=$(docker create \
-            --env-file frontend/.env.example \
-            owasp/nest:test-frontend-unit-latest pnpm run test:unit)
-          docker start -a $CONTAINER_ID
-          EXIT_CODE=$?
-          docker cp $CONTAINER_ID:/app/coverage frontend/coverage 2>/dev/null || true
-          docker rm $CONTAINER_ID >/dev/null 2>&1
-          exit $EXIT_CODE
-
-      - name: Upload coverage report to Codecov
-        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2  # v6.0.0
-        with:
-          fail_ci_if_error: false
-          files: frontend/coverage/lcov.info
-          flags: frontend
-          use_oidc: true
-    timeout-minutes: 10
-
-  run-frontend-e2e-tests:
-    name: Run frontend e2e tests
-    needs:
-      - run-code-quality-checks
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    services:
-      db:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_DB: nest_db_e2e
-          POSTGRES_PASSWORD: nest_user_e2e_password
-          POSTGRES_USER: nest_user_e2e
-        options: >-
-          --health-cmd="pg_isready -U nest_user_e2e -d nest_db_e2e -h localhost -p 5432"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=5
-        ports:
-          - 5432:5432
-      cache:
-        image: redis:8.0.5-alpine3.21
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=5s
-          --health-retries=5
-          --health-timeout=5s
-        ports:
-          - 6379:6379
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-
-      - name: Set up Docker buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
-
-      - name: Setup Backend environment
-        uses: ./.github/workflows/setup-backend-environment
-        with:
-          backend_port: 9000
-          db_name: nest_db_e2e
-          db_password: nest_user_e2e_password
-          db_username: nest_user_e2e
-          env_file: .env.e2e.example
-
-      - name: Build frontend image
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
-        with:
-          build-args: |
-            ENV_FILE=.env.e2e.example
-            NEXT_PUBLIC_E2E_BACKEND_BASE_URL=http://localhost:9000
-          cache-from: |
-            type=gha
-            type=registry,ref=owasp/nest:frontend-e2e-cache
-          cache-to: |
-            type=gha,compression=zstd
-          context: frontend
-          file: docker/frontend/Dockerfile
-          load: true
-          platforms: linux/amd64
-          tags: owasp/nest:frontend-e2e-latest
-
-      - name: Run frontend in the background
-        run: |
-          docker run \
-            --env-file frontend/.env.e2e.example \
-            --name e2e-nest-frontend \
-            --network host \
-            -d \
-            -e NEXT_SERVER_CSRF_URL=http://localhost:9000/csrf/ \
-            -e NEXT_SERVER_GRAPHQL_URL=http://localhost:9000/graphql/ \
-            -p 3000:3000 \
-            owasp/nest:frontend-e2e-latest
-
-      - name: Wait for frontend to be ready
-        run: |
-          timeout 5m bash -c '
-            until wget --spider http://localhost:3000/; do
-              echo "Waiting for the frontend..."
-              sleep 5
-            done
-          '
-          echo "Frontend is up!"
-
-      - name: Build e2e testing image
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
-        with:
-          cache-from: |
-            type=gha
-            type=registry,ref=owasp/nest:frontend-e2e-tests-cache
-          cache-to: |
-            type=gha,compression=zstd
-          context: .
-          file: docker/e2e/Dockerfile
-          load: true
-          platforms: linux/amd64
-          tags: owasp/nest:test-frontend-e2e-latest
-
-      - name: Run frontend end-to-end tests
-        run: |
-          docker run \
-            --network host \
-            -e FRONTEND_URL=http://localhost:3000 \
-            owasp/nest:test-frontend-e2e-latest pnpm run test:e2e
-    timeout-minutes: 20
-
-  run-frontend-a11y-tests:
-    name: Run frontend accessibility tests
-    needs:
-      - run-code-quality-checks
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-
-      - name: Set up Docker buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
-
-      - name: Build frontend a11y-testing image
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
-        with:
-          cache-from: |
-            type=gha
-            type=registry,ref=owasp/nest:test-frontend-a11y-cache
-          cache-to: |
-            type=gha,compression=zstd
-          context: frontend
-          file: docker/frontend/Dockerfile.a11y.test
-          load: true
-          platforms: linux/amd64
-          tags: owasp/nest:test-frontend-a11y-latest
-
-      - name: Run frontend a11y tests
-        run: |
-          docker run --env-file frontend/.env.example owasp/nest:test-frontend-a11y-latest pnpm run test:a11y
-    timeout-minutes: 5
-
-  run-graphql-fuzz-tests:
-    name: Run GraphQL fuzz tests
-    if: false
-    needs:
-      - run-code-quality-checks
-    uses: ./.github/workflows/run-fuzz-tests.yaml
-    with:
-      test-file: graphql_test.py
-
-  run-rest-fuzz-tests:
-    name: Run REST fuzz tests
-    needs:
-      - run-code-quality-checks
-    uses: ./.github/workflows/run-fuzz-tests.yaml
-    with:
-      test-file: rest_test.py
-      rest-url: http://localhost:9500/api/v0
-
-  run-infrastructure-tests:
-    name: Run Infrastructure tests
-    needs:
-      - run-code-quality-checks
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-
-      - name: Install Terraform
-        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85  # v4.0.0
-        with:
-          terraform_version: 1.14
-
-      - name: Run Infrastructure tests
-        run: make test-infrastructure
-
-  set-release-version:
-    name: Set release version
-    if: |
-      github.repository == 'OWASP/Nest' &&
-      (
-        github.event_name == 'schedule' ||
-        github.event_name == 'workflow_dispatch' ||
-        (github.event_name == 'release' && github.event.action == 'published')
-      )
-    needs:
-      - run-backend-tests
-      - run-frontend-a11y-tests
-      - run-frontend-e2e-tests
-      - run-frontend-unit-tests
-      - run-infrastructure-tests
-      - run-rest-fuzz-tests
-    outputs:
-      release_version: ${{ steps.set.outputs.release_version }}
-    permissions: {}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Set release version
-        id: set
-        run: |
-          if [ -n "${{ github.event.release.tag_name }}" ]; then
-            echo "release_version=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
-          else
-            echo "release_version=$(date '+%y.%-m.%-d')-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
-          fi
-    timeout-minutes: 5
-
-  run-staging:
-    name: Run staging workflow
-    needs: set-release-version
-    if: |
-      github.repository == 'OWASP/Nest' &&
-      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-    permissions:
-      contents: read
-    uses: ./.github/workflows/run-staging.yaml
-    with:
-      release_version: ${{ needs.set-release-version.outputs.release_version }}
-
-  build-production-images:
-    name: Build Production Images
+  build-staging-images:
+    name: Build Staging Images
     env:
-      RELEASE_VERSION: ${{ needs.set-release-version.outputs.release_version }}
-    environment: production
-    if: |
-      github.repository == 'OWASP/Nest' &&
-      github.event_name == 'release' &&
-      github.event.action == 'published'
-    needs:
-      - set-release-version
+      RELEASE_VERSION: ${{ inputs.release_version }}
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -348,9 +45,9 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           role-duration-seconds: 3600
           role-external-id: ${{ secrets.AWS_ROLE_EXTERNAL_ID }}
-          role-session-name: GitHubActions-BuildProductionImages
+          role-session-name: GitHubActions-BuildStagingImages
           role-skip-session-tagging: true
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/nest-production-terraform
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/nest-staging-terraform
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@19d944daaa35f0fa1d3f7f8af1d3f2e5de25c5b7  # v2.1.4
@@ -359,10 +56,12 @@ jobs:
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
         with:
           build-args: |
-            OWASP_GID=1002
-            OWASP_UID=1002
+            OWASP_GID=1001
+            OWASP_UID=1001
           cache-from: |
             type=gha
+            type=registry,ref=owasp/nest:backend-staging-cache
+          cache-to: |
             type=registry,ref=owasp/nest:backend-staging-cache
           context: backend
           file: docker/backend/Dockerfile
@@ -370,16 +69,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            owasp/nest:backend-production
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/nest-production-backend:${{ env.RELEASE_VERSION }}
-
-      - name: Get backend image size
-        id: backend-size
-        run: |
-          IMAGE_NAME="owasp/nest:backend-production"
-          RAW_SIZE=$(docker image inspect "$IMAGE_NAME" --format='{{.Size}}')
-          DISPLAY_SIZE=$(numfmt --to=iec --suffix=B "$RAW_SIZE")
-          echo "human_readable=$DISPLAY_SIZE" >> $GITHUB_OUTPUT
+            owasp/nest:backend-staging
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/nest-staging-backend:${{ env.RELEASE_VERSION }}
 
       - name: Prepare frontend public environment
         env:
@@ -410,11 +101,21 @@ jobs:
           NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
           EOF
 
+      - name: Get backend image size
+        id: backend-size
+        run: |
+          IMAGE_NAME="owasp/nest:backend-staging"
+          RAW_SIZE=$(docker image inspect "$IMAGE_NAME" --format='{{.Size}}')
+          DISPLAY_SIZE=$(numfmt --to=iec --suffix=B "$RAW_SIZE")
+          echo "human_readable=$DISPLAY_SIZE" >> $GITHUB_OUTPUT
+
       - name: Build frontend image
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
         with:
           cache-from: |
             type=gha
+            type=registry,ref=owasp/nest:frontend-staging-cache
+          cache-to: |
             type=registry,ref=owasp/nest:frontend-staging-cache
           context: frontend
           file: docker/frontend/Dockerfile
@@ -425,13 +126,13 @@ jobs:
             RELEASE_VERSION=${{ env.RELEASE_VERSION }}
             SENTRY_AUTH_TOKEN=${{ secrets.SENTRY_AUTH_TOKEN }}
           tags: |
-            owasp/nest:frontend-production
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/nest-production-frontend:${{ env.RELEASE_VERSION }}
+            owasp/nest:frontend-staging
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/nest-staging-frontend:${{ env.RELEASE_VERSION }}
 
       - name: Get frontend image size
         id: frontend-size
         run: |
-          IMAGE_NAME="owasp/nest:frontend-production"
+          IMAGE_NAME="owasp/nest:frontend-staging"
           RAW_SIZE=$(docker image inspect "$IMAGE_NAME" --format='{{.Size}}')
           DISPLAY_SIZE=$(numfmt --to=iec --suffix=B "$RAW_SIZE")
           echo "human_readable=$DISPLAY_SIZE" >> $GITHUB_OUTPUT
@@ -444,16 +145,12 @@ jobs:
             echo "**Backend:** ${{ steps.backend-size.outputs.human_readable }}"
             echo "**Frontend:** ${{ steps.frontend-size.outputs.human_readable }}"
           } >> $GITHUB_STEP_SUMMARY
-    timeout-minutes: 5
+    timeout-minutes: 10
 
-  scan-production-images:
-    name: Scan Production Images
-    if: |
-      github.repository == 'OWASP/Nest' &&
-      github.event_name == 'release' &&
-      github.event.action == 'published'
+  scan-staging-images:
+    name: Scan Staging Images
     needs:
-      - build-production-images
+      - build-staging-images
       - set-release-version
     env:
       RELEASE_VERSION: ${{ needs.set-release-version.outputs.release_version }}
@@ -473,39 +170,38 @@ jobs:
 
       - name: Run Trivy security scan via Makefile
         run: |
-          make security-scan-backend-image BACKEND_IMAGE_NAME=owasp/nest:backend-production
-          make security-scan-frontend-image FRONTEND_IMAGE_NAME=owasp/nest:frontend-production
+          make security-scan-backend-image BACKEND_IMAGE_NAME=owasp/nest:backend-staging
+          make security-scan-frontend-image FRONTEND_IMAGE_NAME=owasp/nest:frontend-staging
 
       - name: Generate SBOM for backend image
         run: |
-          make sbom-backend-image BACKEND_IMAGE_NAME=owasp/nest:backend-production
+          make sbom-backend-image BACKEND_IMAGE_NAME=owasp/nest:backend-staging
 
       - name: Generate SBOM for frontend image
         run: |
-          make sbom-frontend-image FRONTEND_IMAGE_NAME=owasp/nest:frontend-production
+          make sbom-frontend-image FRONTEND_IMAGE_NAME=owasp/nest:frontend-staging
 
       - name: Upload SBOMs
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
-            backend-sbom-${{ env.RELEASE_VERSION }}.cdx.json \
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: staging-sbom-${{ env.RELEASE_VERSION }}
+          path: |
+            backend-sbom-${{ env.RELEASE_VERSION }}.cdx.json
             frontend-sbom-${{ env.RELEASE_VERSION }}.cdx.json
     timeout-minutes: 5
 
-  bootstrap-nest-production-infrastructure:
-    name: Bootstrap Nest Production Infrastructure
+  bootstrap-nest-staging-infrastructure:
+    name: Bootstrap Nest Staging Infrastructure
     env:
       TF_IN_AUTOMATION: true
       TF_INPUT: false
-    environment: production
+    environment: staging
     if: |
-      github.repository == 'OWASP/Nest' &&
-      github.event_name == 'release' &&
-      github.event.action == 'published'
+      (github.repository == 'OWASP/Nest' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))
 
     needs:
-      - scan-production-images
+      - scan-staging-images
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -574,18 +270,17 @@ jobs:
         run: terraform apply -auto-approve tfplan
     timeout-minutes: 10
 
-  deploy-production-nest:
-    name: Plan and Deploy Nest Production
+  deploy-staging-nest:
+    name: Plan and Deploy Nest Staging
     env:
       TF_IN_AUTOMATION: true
       TF_INPUT: false
-    environment: production
+    environment: staging
     if: |
       github.repository == 'OWASP/Nest' &&
-      github.event_name == 'release' &&
-      github.event.action == 'published'
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     needs:
-      - bootstrap-nest-production-infrastructure
+      - bootstrap-nest-staging-infrastructure
       - set-release-version
     permissions:
       contents: read
@@ -602,9 +297,9 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           role-duration-seconds: 3600
           role-external-id: ${{ secrets.AWS_ROLE_EXTERNAL_ID }}
-          role-session-name: GitHubActions-ProductionDeploy
+          role-session-name: GitHubActions-StagingDeploy
           role-skip-session-tagging: true
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/nest-production-terraform
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/nest-staging-terraform
 
       - name: Install Terraform
         uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85  # v4.0.0
@@ -615,7 +310,7 @@ jobs:
         env:
           AWS_REGION: ${{ vars.AWS_REGION }}
           TF_STATE_BUCKET_NAME: ${{ secrets.TF_STATE_BUCKET_NAME }}
-          TF_STATE_KEY: production/terraform.tfstate
+          TF_STATE_KEY: staging/terraform.tfstate
         run: |
           umask 377
           cat > infrastructure/live/terraform.tfbackend <<-EOF
@@ -628,19 +323,18 @@ jobs:
         env:
           AVAILABILITY_ZONES: ${{ vars.AWS_AVAILABILITY_ZONES }}
           AWS_REGION: ${{ vars.AWS_REGION }}
-          BACKEND_USE_FARGATE_SPOT: false
+          BACKEND_USE_FARGATE_SPOT: true
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
-          DJANGO_CONFIGURATION: Production
-          DJANGO_SETTINGS_MODULE: settings.production
-          ENABLE_ADDITIONAL_PARAMETERS: true
-          ENABLE_CRON_TASKS: true
-          ENABLE_NAT_GATEWAY: true
-          ENABLE_RDS_PROXY: true
-          ENVIRONMENT: production
-          FRONTEND_USE_FARGATE_SPOT: false
+          DJANGO_CONFIGURATION: Staging
+          DJANGO_SETTINGS_MODULE: settings.staging
+          ENABLE_CRON_TASKS: false
+          ENABLE_NAT_GATEWAY: false
+          ENABLE_RDS_PROXY: false
+          ENVIRONMENT: staging
+          FRONTEND_USE_FARGATE_SPOT: true
           PROJECT_NAME: nest
           RELEASE_VERSION: ${{ needs.set-release-version.outputs.release_version }}
-          TASKS_USE_FARGATE_SPOT: false
+          TASKS_USE_FARGATE_SPOT: true
         run: |
           umask 377
           cat > infrastructure/live/terraform.tfvars <<-EOF
@@ -652,7 +346,6 @@ jobs:
           django_configuration="$DJANGO_CONFIGURATION"
           django_release_version="$RELEASE_VERSION"
           django_settings_module="$DJANGO_SETTINGS_MODULE"
-          enable_additional_parameters=$ENABLE_ADDITIONAL_PARAMETERS
           enable_cron_tasks=$ENABLE_CRON_TASKS
           enable_nat_gateway=$ENABLE_NAT_GATEWAY
           enable_rds_proxy=$ENABLE_RDS_PROXY
@@ -706,7 +399,7 @@ jobs:
           CLUSTER_NAME: ${{ steps.tf-outputs.outputs.tasks_cluster_name }}
           NAT_GATEWAY_ENABLED: ${{ steps.tf-outputs.outputs.nat_gateway_enabled }}
           TASKS_SECURITY_GROUP_ID: ${{ steps.tf-outputs.outputs.tasks_security_group_id }}
-          TASK_DEFINITION: nest-production-migrate
+          TASK_DEFINITION: nest-staging-migrate
           TASKS_SUBNET_IDS: ${{ steps.tf-outputs.outputs.tasks_subnet_ids }}
         run: |
           ASSIGN_PUBLIC_IP=$([ "$NAT_GATEWAY_ENABLED" = "true" ] && echo "DISABLED" || echo "ENABLED")
@@ -747,7 +440,7 @@ jobs:
         env:
           CLUSTER_NAME: ${{ steps.tf-outputs.outputs.tasks_cluster_name }}
           NAT_GATEWAY_ENABLED: ${{ steps.tf-outputs.outputs.nat_gateway_enabled }}
-          TASK_DEFINITION: nest-production-index-data
+          TASK_DEFINITION: nest-staging-index-data
           TASKS_SECURITY_GROUP_ID: ${{ steps.tf-outputs.outputs.tasks_security_group_id }}
           TASKS_SUBNET_IDS: ${{ steps.tf-outputs.outputs.tasks_subnet_ids }}
         run: |
@@ -792,15 +485,12 @@ jobs:
           aws ecs wait services-stable \
             --cluster "$CLUSTER_NAME" \
             --services "$SERVICE_NAME"
+    timeout-minutes: 60
 
-  run-production-lighthouse-ci:
-    name: Run production Lighthouse CI
-    if: |
-      github.repository == 'OWASP/Nest' &&
-      github.event_name == 'release' &&
-      github.event.action == 'published'
+  run-staging-lighthouse-ci:
+    name: Run staging Lighthouse CI
     needs:
-      - deploy-production-nest
+      - deploy-staging-nest
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -827,20 +517,16 @@ jobs:
 
       - name: Run lighthouse-ci
         env:
-          LHCI_BASE_URL: https://nest.owasp.org
+          LHCI_BASE_URL: https://nest.owasp.dev
         run: |
           pnpm run lighthouse-ci
         working-directory: frontend
     timeout-minutes: 5
 
-  run-production-zap-baseline-scan:
-    name: Run production ZAP baseline scan
-    if: |
-      github.repository == 'OWASP/Nest' &&
-      github.event_name == 'release' &&
-      github.event.action == 'published'
+  run-staging-zap-baseline-scan:
+    name: Run staging ZAP baseline scan
     needs:
-      - deploy-production-nest
+      - deploy-staging-nest
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -852,7 +538,7 @@ jobs:
         uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25  # v0.15.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          target: https://nest.owasp.org
+          target: https://nest.owasp.dev
           allow_issue_writing: false
           fail_action: true
           cmd_options: -a -c .zapconfig -r report_html.html
