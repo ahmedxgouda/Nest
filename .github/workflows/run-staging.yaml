@@ -7,6 +7,15 @@ on:
         description: The release version to set
         required: true
         type: string
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_ACCOUNT_ID:
+        required: true
+      AWS_ROLE_EXTERNAL_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
 
 env:
   FORCE_COLOR: 1
@@ -50,11 +59,9 @@ jobs:
 
   bootstrap-nest-staging-infrastructure:
     name: Bootstrap Nest Staging Infrastructure
-    environment: staging
     if: |
       (github.repository == 'OWASP/Nest' &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))
-
     needs:
       - scan-images
     permissions:

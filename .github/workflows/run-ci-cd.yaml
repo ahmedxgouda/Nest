@@ -228,7 +228,6 @@ jobs:
 
   build-production-images:
     name: Build Production Images
-    environment: production
     if: |
       github.repository == 'OWASP/Nest' &&
       github.event_name == 'release' &&
@@ -274,12 +273,10 @@ jobs:
 
   bootstrap-nest-production-infrastructure:
     name: Bootstrap Nest Production Infrastructure
-    environment: production
     if: |
       github.repository == 'OWASP/Nest' &&
       github.event_name == 'release' &&
       github.event.action == 'published'
-
     needs:
       - scan-production-images
     permissions:
