@@ -22,7 +22,7 @@ jobs:
     with:
       release_version: ${{ inputs.release_version }}
       aws_role_session_name: GitHubActions-BuildStagingImages
-      aws_role_to_assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/nest-staging-terraform
+      aws_role_name: nest-staging-terraform
       backend_tag: owasp/nest:backend-staging
       backend_cache_ref: owasp/nest:backend-staging-cache
       backend_uid: '1001'

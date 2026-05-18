@@ -241,7 +241,7 @@ jobs:
     with:
       release_version: ${{ needs.set-release-version.outputs.release_version }}
       aws_role_session_name: GitHubActions-BuildProductionImages
-      aws_role_to_assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/nest-production-terraform
+      aws_role_name: nest-production-terraform
       backend_tag: owasp/nest:backend-production
       backend_cache_ref: owasp/nest:backend-production-cache
       backend_uid: '1002'
