@@ -225,6 +225,7 @@ jobs:
     uses: ./.github/workflows/run-staging.yaml
     with:
       release_version: ${{ needs.set-release-version.outputs.release_version }}
+    secrets: inherit
 
   build-production-images:
     name: Build Production Images
